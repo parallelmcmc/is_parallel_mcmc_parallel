@@ -1,0 +1,277 @@
+# TODO: add a type for kinetic energy
+
+abstract type AbstractHamiltonian end
+
+struct Hamiltonian{M<:AbstractMetric, Tlogπ, T∂logπ∂θ} <: AbstractHamiltonian
+    metric::M
+    ℓπ::Tlogπ
+    ∂ℓπ∂θ::T∂logπ∂θ
+end
+Base.show(io::IO, h::Hamiltonian) = print(io, "Hamiltonian(metric=$(h.metric))")
+
+struct SMCHamiltonian{M<:AbstractMetric, Tlogℓl, Tlogℓθ, T∂logl∂θ, T∂logθ∂θ} <: AbstractHamiltonian
+    metric::M
+    λ::Real
+    ℓl::Tlogℓl
+    ℓθ::Tlogℓθ
+    ∂ℓl∂θ::T∂logl∂θ
+    ∂ℓθ∂θ::T∂logθ∂θ
+end
+
+struct DualValue{V<:AbstractScalarOrVec{<:AbstractFloat}, G<:AbstractVecOrMat{<:AbstractFloat}}
+    value::V    # cached value, e.g. logπ(θ)
+    gradient::G # cached gradient, e.g. ∇logπ(θ)
+    function DualValue(value::V, gradient::G) where {V, G}
+        # Check consistence
+        if value isa AbstractFloat
+            # If `value` is a scalar, `gradient` is a vector
+            @assert gradient isa AbstractVector "`typeof(gradient)`: $(typeof(gradient))"
+        else
+            # If `value` is a vector, `gradient` is a matrix
+            @assert gradient isa AbstractMatrix "`typeof(gradient)`: $(typeof(gradient))"
+        end
+        return new{V,G}(value, gradient)
+    end
+end
+
+Base.similar(dv::DualValue{<:AbstractVecOrMat{T}}) where {T<:AbstractFloat} = 
+    DualValue(zeros(T, size(dv.value)...), zeros(T, size(dv.gradient)...))
+
+# `∂H∂θ` now returns `(logprob, -∂ℓπ∂θ)`
+function ∂H∂θ(h::Hamiltonian, θ::AbstractVecOrMat)
+    res = h.∂ℓπ∂θ(θ)
+    return DualValue(res[1], -res[2])
+end
+
+function ∂H∂θ(h::SMCHamiltonian, θ::AbstractVecOrMat)
+    res_l = h.∂ℓl∂θ(θ)
+    res_θ = h.∂ℓθ∂θ(θ)
+    λ     = h.λ
+
+    prior = res_θ[1]
+    #prior = h.ℓθ(θ) # Stupid hack for Eight Schools
+
+    ℓπ    = res_l[1]*λ + prior
+    ∇ℓπ   = res_l[2]*λ + res_θ[2]
+
+    return DualValue(ℓπ, -∇ℓπ), res_l[1], prior
+end
+
+∂H∂r(::Hamiltonian{<:UnitEuclideanMetric}, r::AbstractVecOrMat) = copy(r)
+∂H∂r(h::Hamiltonian{<:DiagEuclideanMetric}, r::AbstractVecOrMat) = h.metric.M⁻¹ .* r
+∂H∂r(h::Hamiltonian{<:DenseEuclideanMetric}, r::AbstractVecOrMat) = h.metric.M⁻¹ * r
+
+∂H∂r(::SMCHamiltonian{<:UnitEuclideanMetric}, r::AbstractVecOrMat) = copy(r)
+∂H∂r(h::SMCHamiltonian{<:DiagEuclideanMetric}, r::AbstractVecOrMat) = h.metric.M⁻¹ .* r
+
+abstract type AbstractPhasePoint end
+
+struct PhasePoint{T<:AbstractVecOrMat{<:AbstractFloat}, V<:DualValue} <: AbstractPhasePoint
+    θ::T  # Position variables / model parameters.
+    r::T  # Momentum variables
+    ℓπ::V # Cached neg potential energy for the current θ.
+    ℓκ::V # Cached neg kinect energy for the current r.
+    function PhasePoint(θ::T, r::T, ℓπ::V, ℓκ::V) where {T, V}
+        @argcheck length(θ) == length(r) == length(ℓπ.gradient) == length(ℓπ.gradient)
+        if any(isfinite.((θ, r, ℓπ, ℓκ)) .== false)
+            #@warn "The current proposal will be rejected due to numerical error(s)." isfinite.((θ, r, ℓπ, ℓκ))
+            ℓπ = DualValue(map(v -> isfinite(v) ? v : -Inf, ℓπ.value), ℓπ.gradient)
+            ℓκ = DualValue(map(v -> isfinite(v) ? v : -Inf, ℓκ.value), ℓκ.gradient)
+        end
+        new{T,V}(θ, r, ℓπ, ℓκ)
+    end
+end
+
+struct SMCPhasePoint{T<:AbstractVecOrMat{<:AbstractFloat}, V<:DualValue} <: AbstractPhasePoint
+    θ::T  # Position variables / model parameters.
+    r::T  # Momentum variables
+    ℓπ::V # Cached neg potential energy for the current θ.
+    ℓκ::V # Cached neg kinect energy for the current r.
+
+    ℓl::Real
+    ℓθ::Real
+
+    function SMCPhasePoint(θ::T, r::T, ℓπ::V, ℓκ::V, ℓl::Real, ℓθ::Real) where {T, V}
+        @argcheck length(θ) == length(r) == length(ℓπ.gradient) == length(ℓπ.gradient)
+        if any(isfinite.((θ, r, ℓπ, ℓκ, ℓl, ℓθ)) .== false)
+            #@warn "The current proposal will be rejected due to numerical error(s)." isfinite.((θ, r, ℓπ, ℓκ))
+            ℓπ = DualValue(map(v -> isfinite(v) ? v : -Inf, ℓπ.value), ℓπ.gradient)
+            ℓκ = DualValue(map(v -> isfinite(v) ? v : -Inf, ℓκ.value), ℓκ.gradient)
+        end
+        new{T,V}(θ, r, ℓπ, ℓκ, ℓl, ℓθ)
+    end
+end
+
+Base.similar(z::PhasePoint{<:AbstractVecOrMat{T}}) where {T<:AbstractFloat} = 
+    PhasePoint(
+        zeros(T, size(z.θ)...), 
+        zeros(T, size(z.r)...), 
+        similar(z.ℓπ), 
+        similar(z.ℓκ),
+    )
+
+Base.similar(z::SMCPhasePoint{<:AbstractVecOrMat{T}}) where {T<:AbstractFloat} = 
+    SMCPhasePoint(
+        zeros(T, size(z.θ)...), 
+        zeros(T, size(z.r)...), 
+        similar(z.ℓπ), 
+        similar(z.ℓκ),
+        similar(z.ℓl), 
+        similar(z.ℓθ),
+    )
+
+phasepoint(
+    h::Hamiltonian,
+    θ::T,
+    r::T;
+    ℓπ=∂H∂θ(h, θ),
+    ℓκ=DualValue(neg_energy(h, r, θ), ∂H∂r(h, r))
+) where {T<:AbstractVecOrMat} = PhasePoint(θ, r, ℓπ, ℓκ)
+
+smc_phasepoint(
+    h::SMCHamiltonian,
+    θ::T,
+    r::T,
+    ℓl::Real,
+    ℓθ::Real;
+    ℓπ=nothing,
+    ℓκ=nothing, 
+) where {T<:AbstractVecOrMat} = begin
+    ℓπ = isnothing(ℓπ) ? ℓl*h.λ + ℓθ : ℓπ
+    ℓκ = isnothing(ℓκ) ? DualValue(neg_energy(h, r, θ), ∂H∂r(h, r)) : ℓκ
+    SMCPhasePoint(θ, r, ℓπ, ℓκ, ℓl, ℓθ)
+end
+
+smc_phasepoint(
+    h::SMCHamiltonian,
+    θ::T,
+    r::T;
+    ℓπ=nothing,
+    ℓκ=nothing, 
+) where {T<:AbstractVecOrMat} = begin
+    ℓπ, ℓl, ℓθ = ∂H∂θ(h, θ)
+    ℓκ = isnothing(ℓκ) ? DualValue(neg_energy(h, r, θ), ∂H∂r(h, r)) : ℓκ
+    SMCPhasePoint(θ, r, ℓπ, ℓκ, ℓl, ℓθ)
+end
+
+# If position variable and momentum variable are in different containers,
+# move the momentum variable to that of the position variable.
+# This is needed for AHMC to work with CuArrays (without depending on it).
+phasepoint(
+    h::Hamiltonian,
+    θ::T1,
+    _r::T2;
+    r=T1(_r),
+    ℓπ=∂H∂θ(h, θ),
+    ℓκ=DualValue(neg_energy(h, r, θ), ∂H∂r(h, r))
+) where {T1<:AbstractVecOrMat,T2<:AbstractVecOrMat} = PhasePoint(θ, r, ℓπ, ℓκ)
+
+Base.isfinite(v::DualValue) = all(isfinite, v.value) && all(isfinite, v.gradient)
+Base.isfinite(v::AbstractVecOrMat) = all(isfinite, v)
+Base.isfinite(z::PhasePoint) = isfinite(z.ℓπ) && isfinite(z.ℓκ)
+Base.isfinite(z::SMCPhasePoint) = isfinite(z.ℓπ) && isfinite(z.ℓκ) && isfinite(z.ℓl) && isfinite(z.ℓθ)
+
+###
+### Negative energy (or log probability) functions.
+### NOTE: the general form (i.e. non-Euclidean) of K depends on both θ and r.
+###
+
+neg_energy(z::PhasePoint) = z.ℓπ.value + z.ℓκ.value
+
+neg_energy(z::SMCPhasePoint) = z.ℓπ.value + z.ℓκ.value
+
+neg_energy(h::Hamiltonian, θ::AbstractVecOrMat) = h.ℓπ(θ)
+
+neg_energy(
+    ::Hamiltonian{<:UnitEuclideanMetric},
+    r::T,
+    ::T
+) where {T<:AbstractVector} = -sum(abs2, r) / 2
+
+neg_energy(
+    ::SMCHamiltonian{<:UnitEuclideanMetric},
+    r::T,
+    ::T
+) where {T<:AbstractVector} = -sum(abs2, r) / 2
+
+neg_energy(
+    ::Hamiltonian{<:UnitEuclideanMetric},
+    r::T,
+    ::T
+) where {T<:AbstractMatrix} = -vec(sum(abs2, r; dims=1)) / 2
+
+neg_energy(
+    ::SMCHamiltonian{<:UnitEuclideanMetric},
+    r::T,
+    ::T
+) where {T<:AbstractMatrix} = -vec(sum(abs2, r; dims=1)) / 2
+
+neg_energy(
+    h::Hamiltonian{<:DiagEuclideanMetric},
+    r::T,
+    ::T
+) where {T<:AbstractVector} = -sum(abs2.(r) .* h.metric.M⁻¹) / 2
+
+neg_energy(
+    h::SMCHamiltonian{<:DiagEuclideanMetric},
+    r::T,
+    ::T
+) where {T<:AbstractVector} = -sum(abs2.(r) .* h.metric.M⁻¹) / 2
+
+neg_energy(
+    h::Hamiltonian{<:DiagEuclideanMetric},
+    r::T,
+    ::T
+) where {T<:AbstractMatrix} = -vec(sum(abs2.(r) .* h.metric.M⁻¹; dims=1) ) / 2
+
+neg_energy(
+    h::SMCHamiltonian{<:DiagEuclideanMetric},
+    r::T,
+    ::T
+) where {T<:AbstractMatrix} = -vec(sum(abs2.(r) .* h.metric.M⁻¹; dims=1) ) / 2
+
+function neg_energy(
+    h::Hamiltonian{<:DenseEuclideanMetric},
+    r::T,
+    ::T
+) where {T<:AbstractVecOrMat}
+    mul!(h.metric._temp, h.metric.M⁻¹, r)
+    return -dot(r, h.metric._temp) / 2
+end
+
+energy(args...) = -neg_energy(args...)
+
+####
+#### Momentum refreshment
+####
+
+phasepoint(
+    rng::Union{AbstractRNG, AbstractVector{<:AbstractRNG}},
+    θ::AbstractVecOrMat{T},
+    h::Hamiltonian
+) where {T<:Real} = phasepoint(h, θ, rand(rng, h.metric))
+
+phasepoint(
+    rng::Union{AbstractRNG, AbstractVector{<:AbstractRNG}},
+    θ::AbstractVecOrMat{T},
+    h::SMCHamiltonian
+) where {T<:Real} = smc_phasepoint(h, θ, rand(rng, h.metric))
+
+refresh(
+    rng::Union{AbstractRNG, AbstractVector{<:AbstractRNG}},
+    z::PhasePoint,
+    h::Hamiltonian
+) = phasepoint(h, z.θ, rand(rng, h.metric))
+
+refresh(
+    rng::Union{AbstractRNG, AbstractVector{<:AbstractRNG}},
+    z::SMCPhasePoint,
+    h::SMCHamiltonian
+) = smc_phasepoint(h, z.θ, rand(rng, h.metric))
+ 
+# refresh(
+#     rng::Union{AbstractRNG, AbstractVector{<:AbstractRNG}},
+#     z::PhasePoint,
+#     h::Hamiltonian,
+#     α::AbstractFloat
+# ) = phasepoint(h, z.θ, α * z.r + (1 - α^2) * rand(rng, h.metric))
