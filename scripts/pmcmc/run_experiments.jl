@@ -13,6 +13,7 @@
 @everywhere using MCMCChains
 @everywhere using ProgressMeter
 @everywhere using Random
+@everywhere using Random123
 @everywhere using StatsFuns
 @everywhere using Zygote
 
@@ -32,12 +33,14 @@ function run_experiment(fn,
                         dims,
                         init_dist;
                         kwargs...)
+    seed = (0x97dcb950eaebcfba,
+            0x741d36b68bef6415)
     for n_chains in [1, 8, 16, 32, 64, 128]
         n_samples = begin
             if(n_chains == 1)
                 n_samples_seq
             else
-                floor(Int64, n_samples_seq / n_chains * 2)
+                floor(Int64, n_samples_seq / n_chains)
             end
         end
         n_adapts  = floor(Int64, n_adapts_seq / n_chains)
@@ -55,7 +58,8 @@ function run_experiment(fn,
         @info "Running $n_chains chains with " settings=settings 
         results = @showprogress pmap(1:n_reps) do i
             _kwargs = kwargs
-            prng    = MersenneTwister(i)
+            prng    = Random123.Philox4x(UInt64, seed, 10)
+            Random123.set_counter!(prng, i)
             results = fn(prng, ℓπ, dims, init_dist,
                          n_samples, n_adapts, n_chains;
                          _kwargs...)
@@ -70,9 +74,9 @@ function run_experiment(fn,
 end
 
 function run_all_experiments(name, ℓπ, dims, init_dist)
-    n_reps        = 1024
-    n_samples_seq = 4096
-    n_adapts_seq  = 4096
+    n_reps        = 256
+    n_samples_seq = 2048
+    n_adapts_seq  = 2048
 
     settings = Dict(:method  => "gmh_hmcda",
                     :problem => name)
@@ -182,13 +186,13 @@ end
 
 function main(mode=:experiment)
     if(mode == :experiment)
-        gaussian(run_all_experiments, 25,  1e-5, false)
-        gaussian(run_all_experiments, 25,  2.0,  false)
-        gaussian(run_all_experiments, 25,  4.0,  false)
-        gaussian(run_all_experiments, 25,  8.0,  false)
+        #gaussian(run_all_experiments, 25,  1e-5, false)
+        #gaussian(run_all_experiments, 25,  2.0,  false)
+        #gaussian(run_all_experiments, 25,  4.0,  false)
+        #gaussian(run_all_experiments, 25,  8.0,  false)
 
-        gaussian(run_all_experiments, 50,  4.0,  false)
-        gaussian(run_all_experiments, 100, 4.0,  false)
+        #gaussian(run_all_experiments, 50,  4.0,  false)
+        #gaussian(run_all_experiments, 100, 4.0,  false)
 
         #gaussian(run_all_experiments, 250, 4.0,  true)
         logistic(run_all_experiments)
@@ -211,4 +215,3 @@ function main(mode=:experiment)
                  compress=true)
     end
 end
-
