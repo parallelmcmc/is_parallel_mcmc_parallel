@@ -186,10 +186,10 @@ end
 
 function main(mode=:experiment)
     if(mode == :experiment)
-        #gaussian(run_all_experiments, 25,  1e-5, false)
-        #gaussian(run_all_experiments, 25,  2.0,  false)
-        #gaussian(run_all_experiments, 25,  4.0,  false)
-        #gaussian(run_all_experiments, 25,  8.0,  false)
+        gaussian(run_all_experiments, 25,  1e-5, false)
+        gaussian(run_all_experiments, 25,  2.0,  false)
+        gaussian(run_all_experiments, 25,  4.0,  false)
+        gaussian(run_all_experiments, 25,  8.0,  false)
 
         #gaussian(run_all_experiments, 50,  4.0,  false)
         #gaussian(run_all_experiments, 100, 4.0,  false)
