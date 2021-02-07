@@ -508,6 +508,12 @@ git-tree-sha1 = "8df14e3546bfb4fc05acfb1e932cb67387efa201"
 uuid = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
 version = "4.4.0"
 
+[[MKL]]
+deps = ["Libdl", "MKL_jll", "PackageCompiler"]
+git-tree-sha1 = "e01175ff53c062c52b6cbe441a4382e132f7c82e"
+uuid = "33e6dc65-8f57-5167-99aa-e5a354878fb2"
+version = "0.3.0"
+
 [[MKL_jll]]
 deps = ["IntelOpenMP_jll", "Libdl", "Pkg"]
 git-tree-sha1 = "eb540ede3aabb8284cb482aa41d00d6ca850b1f8"
@@ -623,6 +629,12 @@ deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse", "Test"]
 git-tree-sha1 = "95a4038d1011dfdbde7cecd2ad0ac411e53ab1bc"
 uuid = "90014a1f-27ba-587c-ab20-58faa44d9150"
 version = "0.10.1"
+
+[[PackageCompiler]]
+deps = ["Libdl", "Pkg", "UUIDs"]
+git-tree-sha1 = "d448727c4b86be81b225b738c88d30334fda6779"
+uuid = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
+version = "1.2.5"
 
 [[Parameters]]
 deps = ["OrderedCollections", "UnPack"]
